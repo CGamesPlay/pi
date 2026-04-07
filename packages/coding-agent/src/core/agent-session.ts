@@ -2868,6 +2868,7 @@ export class AgentSession {
 					summaryText,
 					summaryDetails,
 					fromExtension,
+					oldLeafId,
 				);
 				summaryEntry = this.sessionManager.getEntry(summaryId) as BranchSummaryEntry;
 
