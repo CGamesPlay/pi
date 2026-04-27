@@ -53,6 +53,7 @@ import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
 	type ContextUsage,
+	type ExtensionCommandContext,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
 	ExtensionRunner,
@@ -277,6 +278,23 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+
+	// Pending callbacks registered via runWhenIdle(). Drained one at a time
+	// once the session reaches a true-idle state (no streaming, no
+	// compaction, no retry, no queued messages, no active agent run).
+	// Cleared on reload() so closures bound to the prior extension runtime
+	// don't fire against the new one.
+	private _idleCallbacks: Array<(ctx: ExtensionCommandContext) => Promise<void> | void> = [];
+	// True while _drainIdleCallbacks is actively running a callback.
+	// Prevents re-entry if a callback transitively triggers another drain
+	// attempt.
+	private _idleDraining = false;
+	// True while a turn is being driven through _runAgentPrompt or the
+	// pre-prompt compaction-only continue loop. Covers brief windows
+	// between agent.prompt()/agent.continue() iterations where none of
+	// the streaming / compacting / retrying flags is set but a turn is
+	// still in flight.
+	private _inAgentRun = false;
 
 	// Bash execution state
 	private _bashAbortController: AbortController | undefined = undefined;
@@ -551,6 +569,68 @@ export class AgentSession {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * True when the session has nothing in flight: no active turn (no
+	 * agent.prompt/continue running, no compaction/retry between
+	 * iterations), no queued steering/follow-up/next-turn messages. Gates
+	 * runWhenIdle callbacks.
+	 */
+	private _isTrulyIdle(): boolean {
+		return (
+			!this._inAgentRun &&
+			!this.agent.state.isStreaming &&
+			!this.isCompacting &&
+			!this.isRetrying &&
+			!this.agent.hasQueuedMessages() &&
+			this._steeringMessages.length === 0 &&
+			this._followUpMessages.length === 0 &&
+			this._pendingNextTurnMessages.length === 0
+		);
+	}
+
+	/**
+	 * Register a callback to run when the session reaches an idle state.
+	 * Callbacks fire one at a time, in registration order; idle is
+	 * re-checked between callbacks because a callback may itself trigger
+	 * new work.
+	 */
+	runWhenIdle(callback: (ctx: ExtensionCommandContext) => Promise<void> | void): void {
+		this._idleCallbacks.push(callback);
+		void this._drainIdleCallbacks();
+	}
+
+	/**
+	 * Drain idle callbacks one at a time. No-op if not idle, no callbacks
+	 * pending, or already draining. Errors are routed to the extension
+	 * error listener so one bad callback can't starve the rest.
+	 */
+	private async _drainIdleCallbacks(): Promise<void> {
+		if (this._idleDraining) return;
+		if (this._idleCallbacks.length === 0) return;
+		if (!this._isTrulyIdle()) return;
+
+		this._idleDraining = true;
+		try {
+			while (this._idleCallbacks.length > 0 && this._isTrulyIdle()) {
+				const callback = this._idleCallbacks.shift();
+				if (!callback) break;
+				const ctx = this._extensionRunner.createCommandContext();
+				try {
+					await callback(ctx);
+				} catch (err) {
+					this._extensionRunner.emitError({
+						extensionPath: "<runWhenIdle>",
+						event: "runWhenIdle",
+						error: err instanceof Error ? err.message : String(err),
+						stack: err instanceof Error ? err.stack : undefined,
+					});
+				}
+			}
+		} finally {
+			this._idleDraining = false;
+		}
 	}
 
 	/** Extract text content from a message */
@@ -915,6 +995,7 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		this._inAgentRun = true;
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
@@ -922,7 +1003,9 @@ export class AgentSession {
 			}
 		} finally {
 			this._flushPendingBashMessages();
+			this._inAgentRun = false;
 		}
+		void this._drainIdleCallbacks();
 	}
 
 	private async _handlePostAgentRun(): Promise<boolean> {
@@ -1040,6 +1123,7 @@ export class AgentSession {
 			// Check if we need to compact before sending (catches aborted responses)
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant && (await this._checkCompaction(lastAssistant, false))) {
+				this._inAgentRun = true;
 				try {
 					await this.agent.continue();
 					while (await this._handlePostAgentRun()) {
@@ -1047,6 +1131,7 @@ export class AgentSession {
 					}
 				} finally {
 					this._flushPendingBashMessages();
+					this._inAgentRun = false;
 				}
 			}
 
@@ -2206,6 +2291,7 @@ export class AgentSession {
 				},
 				getThinkingLevel: () => this.thinkingLevel,
 				setThinkingLevel: (level) => this.setThinkingLevel(level),
+				runWhenIdle: (callback) => this.runWhenIdle(callback),
 			},
 			{
 				getModel: () => this.model,
@@ -2395,6 +2481,10 @@ export class AgentSession {
 	}
 
 	async reload(): Promise<void> {
+		// Drop pending idle callbacks before tearing down the runner.
+		// They were registered against the old extension graph and should
+		// not run against the rebuilt one.
+		this._idleCallbacks = [];
 		const previousFlagValues = this._extensionRunner.getFlagValues();
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
