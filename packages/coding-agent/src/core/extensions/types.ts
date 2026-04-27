@@ -1234,6 +1234,11 @@ export interface ExtensionAPI {
 		options?: { deliverAs?: "steer" | "followUp" },
 	): void;
 
+	/**
+	 * Register a callback to run when the session reaches an idle state.
+	 */
+	runWhenIdle(callback: (ctx: ExtensionCommandContext) => Promise<void> | void): void;
+
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 
@@ -1488,6 +1493,8 @@ export type SetThinkingLevelHandler = (level: ThinkingLevel) => void;
 
 export type SetLabelHandler = (entryId: string, label: string | undefined) => void;
 
+export type RunWhenIdleHandler = (callback: (ctx: ExtensionCommandContext) => Promise<void> | void) => void;
+
 /**
  * Shared state created by loader, used during registration and runtime.
  * Contains flag values (defaults set during registration, CLI values set after).
@@ -1529,6 +1536,7 @@ export interface ExtensionActions {
 	setModel: SetModelHandler;
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;
+	runWhenIdle: RunWhenIdleHandler;
 }
 
 /**

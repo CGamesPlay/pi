@@ -267,29 +267,12 @@ function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
 	}
 }
 
-function isPattern(s: string): boolean {
-	return s.startsWith("!") || s.startsWith("+") || s.startsWith("-") || s.includes("*") || s.includes("?");
-}
-
 function isOverridePattern(s: string): boolean {
 	return s.startsWith("!") || s.startsWith("+") || s.startsWith("-");
 }
 
 function hasGlobPattern(s: string): boolean {
 	return s.includes("*") || s.includes("?");
-}
-
-function splitPatterns(entries: string[]): { plain: string[]; patterns: string[] } {
-	const plain: string[] = [];
-	const patterns: string[] = [];
-	for (const entry of entries) {
-		if (isPattern(entry)) {
-			patterns.push(entry);
-		} else {
-			plain.push(entry);
-		}
-	}
-	return { plain, patterns };
 }
 
 function collectFiles(
@@ -873,7 +856,12 @@ export class DefaultPackageManager implements PackageManager {
 			this.emitProgress({ type: "complete", action, source });
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			this.emitProgress({ type: "error", action, source, message: errorMessage });
+			this.emitProgress({
+				type: "error",
+				action,
+				source,
+				message: errorMessage,
+			});
 			throw error;
 		}
 	}
@@ -938,7 +926,10 @@ export class DefaultPackageManager implements PackageManager {
 	): Promise<ResolvedPaths> {
 		const accumulator = this.createAccumulator();
 		const scope: SourceScope = options?.temporary ? "temporary" : options?.local ? "project" : "user";
-		const packageSources = sources.map((source) => ({ pkg: source as PackageSource, scope }));
+		const packageSources = sources.map((source) => ({
+			pkg: source as PackageSource,
+			scope,
+		}));
 		await this.resolvePackageSources(packageSources, accumulator);
 		return this.toResolvedPaths(accumulator);
 	}
@@ -1170,8 +1161,12 @@ export class DefaultPackageManager implements PackageManager {
 		const packageSources = this.dedupePackages(allPackages);
 		const checks = packageSources
 			.filter(
-				(entry): entry is { pkg: PackageSource; scope: Exclude<SourceScope, "temporary"> } =>
-					entry.scope !== "temporary",
+				(
+					entry,
+				): entry is {
+					pkg: PackageSource;
+					scope: Exclude<SourceScope, "temporary">;
+				} => entry.scope !== "temporary",
 			)
 			.map((entry) => async (): Promise<PackageUpdate | undefined> => {
 				const source = typeof entry.pkg === "string" ? entry.pkg : entry.pkg.source;
@@ -1226,7 +1221,11 @@ export class DefaultPackageManager implements PackageManager {
 			const sourceStr = typeof pkg === "string" ? pkg : pkg.source;
 			const filter = typeof pkg === "object" ? pkg : undefined;
 			const parsed = this.parseSource(sourceStr);
-			const metadata: PathMetadata = { source: sourceStr, scope, origin: "package" };
+			const metadata: PathMetadata = {
+				source: sourceStr,
+				scope,
+				origin: "package",
+			};
 
 			if (parsed.type === "local") {
 				const baseDir = this.getBaseDirForScope(scope);
@@ -1549,7 +1548,9 @@ export class DefaultPackageManager implements PackageManager {
 				],
 			};
 		} catch {
-			await this.runCommand("git", ["remote", "set-head", "origin", "-a"], { cwd: installedPath }).catch(() => {});
+			await this.runCommand("git", ["remote", "set-head", "origin", "-a"], {
+				cwd: installedPath,
+			}).catch(() => {});
 			const head = await this.runCommandCapture("git", ["rev-parse", "origin/HEAD"], {
 				cwd: installedPath,
 				timeoutMs: NETWORK_TIMEOUT_MS,
@@ -1794,11 +1795,15 @@ export class DefaultPackageManager implements PackageManager {
 
 		await this.runCommand("git", ["clone", source.repo, targetDir]);
 		if (source.ref) {
-			await this.runCommand("git", ["checkout", source.ref], { cwd: targetDir });
+			await this.runCommand("git", ["checkout", source.ref], {
+				cwd: targetDir,
+			});
 		}
 		const packageJsonPath = join(targetDir, "package.json");
 		if (existsSync(packageJsonPath)) {
-			await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
+			await this.runNpmCommand(this.getGitDependencyInstallArgs(), {
+				cwd: targetDir,
+			});
 		}
 	}
 
@@ -1835,14 +1840,18 @@ export class DefaultPackageManager implements PackageManager {
 			return;
 		}
 
-		await this.runCommand("git", ["reset", "--hard", commitRef], { cwd: targetDir });
+		await this.runCommand("git", ["reset", "--hard", commitRef], {
+			cwd: targetDir,
+		});
 
 		// Clean untracked files (extensions should be pristine)
 		await this.runCommand("git", ["clean", "-fdx"], { cwd: targetDir });
 
 		const packageJsonPath = join(targetDir, "package.json");
 		if (existsSync(packageJsonPath)) {
-			await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
+			await this.runNpmCommand(this.getGitDependencyInstallArgs(), {
+				cwd: targetDir,
+			});
 		}
 	}
 
@@ -1944,7 +1953,9 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		const output = this.runNpmCommandSync(["list", "-g", "--depth", "0", "--json"]);
-		const entries = JSON.parse(output) as Array<{ dependencies?: Record<string, { path?: string }> }>;
+		const entries = JSON.parse(output) as Array<{
+			dependencies?: Record<string, { path?: string }>;
+		}>;
 		for (const entry of entries) {
 			const path = entry.dependencies?.[packageName]?.path;
 			if (path) return path;
@@ -2224,13 +2235,26 @@ export class DefaultPackageManager implements PackageManager {
 	): void {
 		if (entries.length === 0) return;
 
-		// Collect all files from plain entries (non-pattern entries)
-		const { plain, patterns } = splitPatterns(entries);
-		const resolvedPlain = plain.map((p) => this.resolvePathFromBase(p, baseDir));
-		const allFiles = this.collectFilesFromPaths(resolvedPlain, resourceType);
+		// Separate source paths (plain or glob) from override patterns (!/-/+)
+		const sourceEntries = entries.filter((e) => !isOverridePattern(e));
+		const overridePatterns = entries.filter(isOverridePattern);
 
-		// Determine which files are enabled based on patterns
-		const enabledPaths = applyPatterns(allFiles, patterns, baseDir);
+		// Resolve source paths, expanding globs (same as collectFilesFromManifestEntries)
+		const resolvedSources = sourceEntries.flatMap((entry) => {
+			if (!hasGlobPattern(entry)) {
+				return [this.resolvePathFromBase(entry, baseDir)];
+			}
+			return globSync(entry, {
+				cwd: baseDir,
+				absolute: true,
+				dot: false,
+				nodir: false,
+			}).map((match) => resolve(match));
+		});
+		const allFiles = this.collectFilesFromPaths(resolvedSources, resourceType);
+
+		// Determine which files are enabled based on override patterns
+		const enabledPaths = applyPatterns(allFiles, overridePatterns, baseDir);
 
 		// Add all files with their enabled state
 		for (const f of allFiles) {
@@ -2516,7 +2540,11 @@ export class DefaultPackageManager implements PackageManager {
 	private runCommandCapture(
 		command: string,
 		args: string[],
-		options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+		options?: {
+			cwd?: string;
+			timeoutMs?: number;
+			env?: Record<string, string>;
+		},
 	): Promise<string> {
 		return new Promise((resolvePromise, reject) => {
 			const child = this.spawnCaptureCommand(command, args, options);

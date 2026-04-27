@@ -1456,6 +1456,28 @@ Content`,
 			expect(result.skills.some((r) => isDisabled(r, "bad-skill", "includes"))).toBe(true);
 		});
 
+		it("should expand glob paths in settings skills", async () => {
+			const externalSkillsDir = join(tempDir, "external-skills");
+			mkdirSync(join(externalSkillsDir, "skill-a"), { recursive: true });
+			mkdirSync(join(externalSkillsDir, "skill-b"), { recursive: true });
+			writeFileSync(
+				join(externalSkillsDir, "skill-a", "SKILL.md"),
+				"---\nname: skill-a\ndescription: Skill A\n---\nContent",
+			);
+			writeFileSync(
+				join(externalSkillsDir, "skill-b", "SKILL.md"),
+				"---\nname: skill-b\ndescription: Skill B\n---\nContent",
+			);
+
+			// Use a glob path (relative to agentDir) that expands to the external skills dir
+			const relativeGlob = `${relative(agentDir, externalSkillsDir)}/*`;
+			settingsManager.setSkillPaths([relativeGlob]);
+
+			const result = await packageManager.resolve();
+			expect(result.skills.some((r) => r.path.includes("skill-a") && r.enabled)).toBe(true);
+			expect(result.skills.some((r) => r.path.includes("skill-b") && r.enabled)).toBe(true);
+		});
+
 		it("should work without patterns (backward compatible)", async () => {
 			const extDir = join(agentDir, "extensions");
 			mkdirSync(extDir, { recursive: true });

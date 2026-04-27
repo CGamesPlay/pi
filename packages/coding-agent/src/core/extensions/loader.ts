@@ -182,6 +182,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setModel: () => Promise.reject(new Error("Extension runtime not initialized")),
 		getThinkingLevel: notInitialized,
 		setThinkingLevel: notInitialized,
+		runWhenIdle: notInitialized,
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
 		assertActive,
@@ -284,6 +285,11 @@ function createExtensionAPI(
 		sendUserMessage(content, options): void {
 			runtime.assertActive();
 			runtime.sendUserMessage(content, options);
+		},
+
+		runWhenIdle(callback): void {
+			runtime.assertActive();
+			runtime.runWhenIdle(callback);
 		},
 
 		appendEntry(customType: string, data?: unknown): void {
