@@ -326,6 +326,7 @@ export class ExtensionRunner {
 		this.runtime.setModel = actions.setModel;
 		this.runtime.getThinkingLevel = actions.getThinkingLevel;
 		this.runtime.setThinkingLevel = actions.setThinkingLevel;
+		this.runtime.runWhenIdle = actions.runWhenIdle;
 
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
