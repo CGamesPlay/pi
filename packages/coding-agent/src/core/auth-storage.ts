@@ -53,6 +53,7 @@ type LockResult<T> = {
 const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
 
 export interface AuthStorageBackend {
+	read(): string | undefined;
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T;
 	withLockAsync<T>(fn: (current: string | undefined) => Promise<LockResult<T>>): Promise<T>;
 }
@@ -103,6 +104,10 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		}
 
 		throw (lastError as Error) ?? new Error("Failed to acquire auth storage lock");
+	}
+
+	read(): string | undefined {
+		return existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
 	}
 
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T {
@@ -179,6 +184,10 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 
 export class InMemoryAuthStorageBackend implements AuthStorageBackend {
 	private value: string | undefined;
+
+	read(): string | undefined {
+		return this.value;
+	}
 
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T {
 		const { result, next } = fn(this.value);
@@ -257,12 +266,8 @@ export class AuthStorage {
 	 * Reload credentials from storage.
 	 */
 	reload(): void {
-		let content: string | undefined;
 		try {
-			this.storage.withLock((current) => {
-				content = current;
-				return { result: undefined };
-			});
+			const content = this.storage.read();
 			this.data = this.parseStorageData(content);
 			this.loadError = null;
 		} catch (error) {

@@ -171,6 +171,7 @@ export interface SettingsManagerCreateOptions {
 }
 
 export interface SettingsStorage {
+	read(scope: SettingsScope): string | undefined;
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void;
 }
 
@@ -188,6 +189,11 @@ export class FileSettingsStorage implements SettingsStorage {
 		const resolvedAgentDir = resolvePath(agentDir);
 		this.globalSettingsPath = join(resolvedAgentDir, "settings.json");
 		this.projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME, "settings.json");
+	}
+
+	read(scope: SettingsScope): string | undefined {
+		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
+		return existsSync(path) ? readFileSync(path, "utf-8") : undefined;
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
@@ -251,6 +257,10 @@ export class FileSettingsStorage implements SettingsStorage {
 export class InMemorySettingsStorage implements SettingsStorage {
 	private global: string | undefined;
 	private project: string | undefined;
+
+	read(scope: SettingsScope): string | undefined {
+		return scope === "global" ? this.global : this.project;
+	}
 
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void {
 		const current = scope === "global" ? this.global : this.project;
@@ -346,12 +356,7 @@ export class SettingsManager {
 			return {};
 		}
 
-		let content: string | undefined;
-		storage.withLock(scope, (current) => {
-			content = current;
-			return undefined;
-		});
-
+		const content = storage.read(scope);
 		if (!content) {
 			return {};
 		}
