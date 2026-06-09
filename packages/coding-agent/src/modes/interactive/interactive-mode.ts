@@ -3005,8 +3005,10 @@ export class InteractiveMode {
 				// Show retry indicator
 				this.statusContainer.clear();
 				this.retryCountdown?.dispose();
+				const formatRetryDelay = (seconds: number): string =>
+					seconds >= 90 ? `${Math.ceil(seconds / 60)}m` : `${seconds}s`;
 				const retryMessage = (seconds: number) =>
-					`Retrying (${event.attempt}/${event.maxAttempts}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`;
+					`Retrying (${event.attempt}/${event.maxAttempts}) in ${formatRetryDelay(seconds)}... (${keyText("app.interrupt")} to cancel)`;
 				this.retryLoader = new Loader(
 					this.ui,
 					(spinner) => theme.fg("warning", spinner),

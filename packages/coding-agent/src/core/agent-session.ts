@@ -2598,6 +2598,15 @@ export class AgentSession {
 		);
 	}
 
+	private static readonly _ZAI_RESET_RE = /reset at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/;
+
+	private _parseZaiResetDelayMs(errorMessage: string): number | null {
+		const m = AgentSession._ZAI_RESET_RE.exec(errorMessage);
+		if (!m) return null;
+		const resetTime = new Date(`${m[1].replace(" ", "T")}+08:00`);
+		return Math.max(0, resetTime.getTime() - Date.now()) + 5_000;
+	}
+
 	/**
 	 * Prepare a retryable error for continuation with exponential backoff.
 	 * @returns true if the caller should continue the agent, false otherwise
@@ -2616,7 +2625,9 @@ export class AgentSession {
 			return false;
 		}
 
-		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		const isZai = this.model?.provider === "zai" || this.model?.provider === "zai-coding-cn";
+		const zaiDelay = isZai ? this._parseZaiResetDelayMs(message.errorMessage ?? "") : null;
+		const delayMs = zaiDelay ?? settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
 
 		this._emit({
 			type: "auto_retry_start",
